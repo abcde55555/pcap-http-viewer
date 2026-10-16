@@ -1,0 +1,118 @@
+# Built-in sensitive-data rules for the pcap HTTP viewer.
+# scope: url | header | reqbody | respbody | body (body = both req+resp)
+# validator: id-checksum | luhn | jwt
+# NOTE: patterns use Go RE2 syntax — no lookahead/lookbehind.
+rules:
+  - id: cn-id-card
+    name: 中国身份证号
+    severity: high
+    category: pii
+    scope: [body, url]
+    pattern: '[1-9][0-9]{5}(?:18|19|20)[0-9]{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12][0-9]|3[01])[0-9]{3}[0-9Xx]'
+    validator: id-checksum
+    context: 30
+
+  - id: cn-mobile
+    name: 中国手机号
+    severity: medium
+    category: pii
+    scope: [body, url, header]
+    pattern: '(?:\+?86[-\s]?)?\b1[3-9][0-9]{9}\b'
+    context: 20
+
+  - id: email
+    name: 邮箱地址
+    severity: low
+    category: pii
+    scope: [body, url]
+    pattern: '[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}'
+    context: 20
+
+  - id: bank-card
+    name: 银行卡号(Luhn)
+    severity: high
+    category: finance
+    scope: [body, url]
+    pattern: '(?:62[0-9]{14,17}|4[0-9]{12,18}|5[1-5][0-9]{14}|3[47][0-9]{13})'
+    validator: luhn
+    context: 20
+
+  - id: jwt
+    name: JWT令牌
+    severity: high
+    category: credential
+    scope: [body, header]
+    pattern: 'eyJ[A-Za-z0-9_\-]+\.eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+'
+    validator: jwt
+    context: 12
+
+  - id: authorization-header
+    name: Authorization头
+    severity: high
+    category: credential
+    scope: [header]
+    headerName: Authorization
+
+  - id: cookie-header
+    name: Cookie/Set-Cookie
+    severity: medium
+    category: credential
+    scope: [header]
+    pattern: '(?i)(?:^|[\s,;])(session|token|sid|jwt|auth|sess)[a-z0-9_\-]*='
+
+  - id: password-field
+    name: 密码/密钥字段
+    severity: high
+    category: credential
+    scope: [body, url]
+    pattern: '(?i)["'']?(?:password|passwd|pwd|secret|token|access[_-]?key|secret[_-]?key|api[_-]?key|app[_-]?secret)["'']?\s*[:=]\s*["'']?[^\s,"'']{6,}'
+    context: 8
+
+  - id: private-key
+    name: 私钥(PEM)
+    severity: critical
+    category: credential
+    scope: [body]
+    pattern: '-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----'
+
+  - id: aws-access-key
+    name: AWS Access Key
+    severity: critical
+    category: cloud-key
+    scope: [body, header]
+    pattern: 'AKIA[0-9A-Z]{16}'
+
+  - id: wechat-key
+    name: 微信AppID/Secret
+    severity: high
+    category: app-key
+    scope: [body, url]
+    pattern: '(?i)(?:wx[0-9a-f]{16}|appsecret|app_secret)["'']?\s*[:=]\s*["'']?[0-9a-f]{16,}'
+
+  - id: ipv4
+    name: 内网IPv4地址
+    severity: info
+    category: network
+    scope: [body, url]
+    pattern: '(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})'
+
+  - id: mac-addr
+    name: MAC地址
+    severity: info
+    category: network
+    scope: [body]
+    pattern: '(?i)(?:[0-9A-F]{2}[:-]){5}[0-9A-F]{2}'
+
+  - id: bearer-token
+    name: Bearer Token
+    severity: high
+    category: credential
+    scope: [header, body]
+    pattern: '(?i)Bearer\s+[A-Za-z0-9\-\._~\+\/=]{20,}'
+
+  - id: basic-auth
+    name: HTTP Basic认证
+    severity: high
+    category: credential
+    scope: [header]
+    pattern: '(?i)Basic\s+[A-Za-z0-9+\/=]{8,}'

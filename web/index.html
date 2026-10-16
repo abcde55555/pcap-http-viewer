@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PCAP HTTP 查看器</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='13' fill='%231e1f22'/%3E%3Cg fill='none' stroke='%235b9cff' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M28 13v8M28 21l-7 5M28 21l7 5'/%3E%3Ccircle cx='28' cy='33' r='13'/%3E%3Cpath d='M38 43l11 11'/%3E%3C/g%3E%3Cg stroke='%235b9cff' stroke-width='2.4' stroke-linecap='round' opacity='0.85'%3E%3Cpath d='M21 30h14M21 35h10'/%3E%3C/g%3E%3Ccircle cx='23.5' cy='29.9' r='1.7' fill='%2343b581' stroke='none'/%3E%3Ccircle cx='23.5' cy='35' r='1.7' fill='%23faa61a' stroke='none'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="landing" class="landing">
+  <div class="landing-card">
+    <div class="landing-logo">
+      <svg xmlns="http://www.w3.org/2000/svg" width="72" height="72" viewBox="0 0 64 64">
+        <rect width="64" height="64" rx="13" fill="#2b2d31" stroke="#3a3c42" stroke-width="1.5"/>
+        <g fill="none" stroke="#5b9cff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M28 13v8M28 21l-7 5M28 21l7 5"/>
+          <circle cx="28" cy="33" r="13"/>
+          <path d="M38 43l11 11"/>
+        </g>
+        <g stroke="#5b9cff" stroke-width="2.4" stroke-linecap="round" opacity="0.85">
+          <path d="M21 30h14M21 35h10"/>
+        </g>
+        <circle cx="23.5" cy="29.9" r="1.7" fill="#43b581" stroke="none"/>
+        <circle cx="23.5" cy="35" r="1.7" fill="#faa61a" stroke="none"/>
+      </svg>
+    </div>
+    <h1>PCAP HTTP 查看器</h1>
+    <p class="landing-sub">选择一个 <code>.pcap</code> / <code>.pcapng</code> 文件开始分析</p>
+    <button id="landing-choose" class="primary big">选择抓包文件…</button>
+    <p class="landing-hint">HTTP 明文请求/响应会自动重组并展示；HTTPS 仅显示 SNI 等元数据。<br>敏感信息扫描为手动触发，不会自动执行。</p>
+  </div>
+</div>
+<div id="app">
+  <header class="toolbar">
+    <div class="toolbar-left">
+      <div class="module-switch">
+        <button class="mod-btn active" data-mod="browser">📡 抓包浏览</button>
+        <button class="mod-btn" data-mod="repeater">🔁 重放工作台</button>
+      </div>
+      <span id="file-name" class="file-name">未打开文件</span>
+      <span id="parse-progress" class="progress-msg"></span>
+    </div>
+    <div class="toolbar-right" id="browser-tools">
+      <button id="btn-open" class="ghost small">打开抓包…</button>
+      <button id="btn-scan" class="ghost" title="手动扫描敏感信息（不会自动执行）">🔍 扫描敏感信息</button>
+      <button id="btn-findings" class="ghost" title="全局敏感信息视图（按分类查看，可跳转到对应请求）">🛡️ 敏感信息 <span id="findings-total" class="badge-count"></span></button>
+      <label class="seg">
+        <input type="checkbox" id="only-sensitive"> 仅含敏感信息
+      </label>
+      <label class="seg">
+        <input type="checkbox" id="hide-tls"> 隐藏加密会话
+      </label>
+      <button id="btn-rules" class="ghost" title="管理敏感信息规则">规则</button>
+    </div>
+    <div class="toolbar-right" id="repeater-tools" hidden>
+      <button id="rep-new" class="ghost small" title="新建标签">＋ 新标签</button>
+      <button id="rep-send" class="primary" title="发送 (Ctrl+Enter)">发送 ▶</button>
+    </div>
+    <input type="file" id="file-input" accept=".pcap,.pcapng,.cap" hidden>
+  </header>
+
+  <div id="mod-browser" class="module">
+  <section class="filterbar">
+    <input type="text" id="q" placeholder="关键词筛选 (method / host / URL / header / body)…" autocomplete="off" spellcheck="false">
+    <select id="method" title="方法">
+      <option value="">全部方法</option>
+      <option>GET</option><option>POST</option><option>PUT</option>
+      <option>DELETE</option><option>HEAD</option><option>OPTIONS</option><option>PATCH</option>
+    </select>
+    <input type="text" id="host" placeholder="host…" list="host-list" autocomplete="off" spellcheck="false">
+    <datalist id="host-list"></datalist>
+    <select id="status" title="状态码">
+      <option value="">全部状态</option>
+      <option value="2">2xx</option><option value="3">3xx</option>
+      <option value="4">4xx</option><option value="5">5xx</option>
+    </select>
+    <input type="datetime-local" id="time-from" title="起始时间">
+    <span class="sep">→</span>
+    <input type="datetime-local" id="time-to" title="结束时间">
+    <button id="clear-filters" class="ghost small">清除</button>
+    <span id="result-count" class="count"></span>
+  </section>
+
+  <main class="split">
+    <section id="list-pane" class="list-pane">
+      <div class="list-header">
+        <div class="row">
+          <span class="col-sev"></span>
+          <span class="col-time sortable" data-sort="t">时间<span class="sort-arrow"></span></span>
+          <span class="col-method sortable" data-sort="m">方法<span class="sort-arrow"></span></span>
+          <span class="col-host sortable" data-sort="h">主机<span class="sort-arrow"></span></span>
+          <span class="col-url sortable" data-sort="u">URL<span class="sort-arrow"></span></span>
+          <span class="col-status sortable" data-sort="s">状态<span class="sort-arrow"></span></span>
+          <span class="col-size sortable" data-sort="ps">大小<span class="sort-arrow"></span></span>
+          <span class="col-dur sortable" data-sort="d">耗时<span class="sort-arrow"></span></span>
+        </div>
+      </div>
+      <div id="list-scroll" class="list-scroll"></div>
+    </section>
+
+    <section id="detail-pane" class="detail-pane">
+      <div id="empty-detail" class="empty-detail">从左侧选择一个会话以查看请求 / 响应</div>
+      <div id="detail" class="detail" hidden>
+        <div class="detail-tabs">
+          <div class="tab-group" id="tab-group">
+            <button data-tab="req" class="tab active">请求</button>
+            <button data-tab="resp" class="tab">响应</button>
+          </div>
+          <span id="detail-title" class="detail-title"></span>
+          <button id="btn-layout" class="ghost layout-btn" title="切换布局: Tab 切换 / 左右并排">
+            <span class="layout-icon">⇆</span> <span class="layout-label">并排</span>
+          </button>
+        </div>
+        <div id="findings-bar" class="findings-bar" hidden></div>
+        <div class="panels" id="detail-panels">
+          <div id="panel-req" class="panel active">
+            <div class="pane-head">
+              <span>请求</span>
+              <span class="pane-actions">
+                <button class="ghost small copy-headers" data-side="req" title="复制请求头">复制头</button>
+                <button class="ghost small copy-curl" title="复制为 cURL 命令">cURL</button>
+              </span>
+            </div>
+            <pre id="req-line" class="status-line"></pre>
+            <div id="req-headers" class="headers selectable"></div>
+            <div class="body-toolbar">
+              <span class="body-label">请求体</span>
+              <div class="body-actions">
+                <button class="ghost small copy-body" data-side="req">复制</button>
+                <select id="req-view-as" class="small-select">
+                  <option value="auto">自动</option>
+                  <option value="json">JSON</option>
+                  <option value="text">文本</option>
+                  <option value="hex">Hex</option>
+                  <option value="image">图片</option>
+                </select>
+                <button id="req-download" class="ghost small">下载</button>
+              </div>
+            </div>
+            <div id="req-body" class="body selectable"></div>
+          </div>
+          <div id="splitter" class="splitter" hidden></div>
+          <div id="panel-resp" class="panel">
+            <div class="pane-head">
+              <span>响应</span>
+              <span class="pane-actions">
+                <button class="ghost small copy-headers" data-side="resp" title="复制响应头">复制头</button>
+              </span>
+            </div>
+            <pre id="resp-line" class="status-line"></pre>
+            <div id="resp-headers" class="headers selectable"></div>
+            <div class="body-toolbar">
+              <span class="body-label">响应体</span>
+              <div class="body-actions">
+                <button class="ghost small copy-body" data-side="resp">复制</button>
+                <select id="resp-view-as" class="small-select">
+                  <option value="auto">自动</option>
+                  <option value="json">JSON</option>
+                  <option value="text">文本</option>
+                  <option value="hex">Hex</option>
+                  <option value="image">图片</option>
+                </select>
+                <button id="resp-download" class="ghost small">下载</button>
+              </div>
+            </div>
+            <div id="resp-body" class="body selectable"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+  </div><!-- /mod-browser -->
+
+  <!-- Repeater workbench -->
+  <section id="mod-repeater" class="module repeater" hidden>
+    <div class="rep-tabs" id="rep-tabs"></div>
+    <div class="rep-work" id="rep-work"></div>
+    <div class="rep-empty" id="rep-empty">
+      <p>还没有重放标签。从「抓包浏览」列表里右键某条请求，选择 <b>发送到重放器</b>，或点右上角 <b>＋ 新标签</b>。</p>
+    </div>
+  </section>
+
+  <!-- toast -->
+  <div id="toast" class="toast" hidden></div>
+
+  <!-- list context menu -->
+  <ul id="ctx-menu" class="ctx-menu" hidden></ul>
+
+  <!-- Global findings view -->
+  <div id="findings-modal" class="modal" hidden>
+    <div class="modal-box wide">
+      <div class="modal-head">
+        <h3>敏感信息总览</h3>
+        <div class="modal-tools">
+          <input type="text" id="findings-search" placeholder="筛选命中值 / 主机 / URL…" class="find-search">
+          <button id="findings-close" class="ghost">✕</button>
+        </div>
+      </div>
+      <div class="modal-body" id="findings-body">
+        <div class="loading">点「扫描敏感信息」后此处显示所有命中。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Rule management modal -->
+  <div id="rules-modal" class="modal" hidden>
+    <div class="modal-box wide">
+      <div class="modal-head">
+        <h3>敏感信息规则</h3>
+        <button id="rules-close" class="ghost">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="hint">规则以 YAML/JSON 形式存储在用户配置目录，支持导入/导出。修改规则后点工具栏的 <b>「扫描敏感信息」</b> 按钮才会执行扫描。</p>
+        <div class="rules-toolbar">
+          <button id="rules-enable-all" class="ghost small">全部启用</button>
+          <button id="rules-disable-all" class="ghost small">全部禁用</button>
+          <label class="ghost small file-btn">导入 YAML<input type="file" id="rules-import" accept=".yaml,.yml,.json" hidden></label>
+          <button id="rules-export" class="ghost small">导出 YAML</button>
+        </div>
+        <div id="rules-list" class="rules-list"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
